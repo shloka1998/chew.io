@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { FOOD_ANALYSIS_SYSTEM_PROMPT } from '@/lib/prompts';
 
-export const maxDuration = 60; // Allow up to 60s for vision analysis
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
     const client = new Anthropic({ apiKey });
 
     // Build message content based on whether we have an image or text
-    const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const userContent: any[] = [];
 
     if (imageBase64) {
       userContent.push({
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-3-5-sonnet-20241022',
       max_tokens: 2048,
       system: FOOD_ANALYSIS_SYSTEM_PROMPT,
       messages: [
@@ -57,13 +58,14 @@ export async function POST(request: NextRequest) {
       ],
     });
 
-    const textBlock = response.content.find(block => block.type === 'text');
+    const textBlock = response.content.find((block: { type: string }) => block.type === 'text');
     if (!textBlock || textBlock.type !== 'text') {
       return NextResponse.json({ error: 'No response from AI' }, { status: 500 });
     }
 
     // Extract JSON from the response (handle potential markdown code blocks)
-    let jsonStr = textBlock.text;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let jsonStr = (textBlock as any).text as string;
     const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (jsonMatch) {
       jsonStr = jsonMatch[1];
@@ -73,21 +75,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(analysis);
   } catch (error: unknown) {
     console.error('Analysis error:', error);
-    const message = error instanceof Error ? error.message : 'Analysis failed';
 
-    if (message.includes('invalid_api_key') || message.includes('authentication')) {
-      return NextResponse.json({ error: 'Invalid API key. Please check your ANTHROPIC_API_KEY.' }, { status: 401 });
+    // Extract the most useful error info
+    let message = 'Unknown error';
+    if (error instanceof Error) {
+      message = error.message;
     }
-    if (message.includes('rate_limit')) {
+    // Anthropic SDK errors often have a status and error body
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const statusCode = (error as any)?.status;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorBody = (error as any)?.error;
+
+    if (statusCode === 401 || message.includes('invalid_api_key') || message.includes('authentication')) {
+      return NextResponse.json({ error: 'Invalid API key. Please check your ANTHROPIC_API_KEY in Vercel settings.' }, { status: 401 });
+    }
+    if (statusCode === 429 || message.includes('rate_limit')) {
       return NextResponse.json({ error: 'Too many requests. Please wait a moment.' }, { status: 429 });
     }
-    if (message.includes('credit') || message.includes('billing') || message.includes('payment')) {
-      return NextResponse.json({ error: 'API billing issue. Please add credits at console.anthropic.com.' }, { status: 402 });
+    if (message.includes('credit') || message.includes('billing') || message.includes('payment') || message.includes('Could not resolve payment')) {
+      return NextResponse.json({ error: 'No API credits. Please add credits at console.anthropic.com/settings/billing' }, { status: 402 });
     }
-    if (message.includes('not_found') || message.includes('model')) {
-      return NextResponse.json({ error: 'AI model not available. Please try again.' }, { status: 500 });
+    if (statusCode === 400 && message.includes('Could not process image')) {
+      return NextResponse.json({ error: 'Could not read the photo. Please try a different image.' }, { status: 400 });
     }
 
-    return NextResponse.json({ error: `Analysis failed: ${message}` }, { status: 500 });
+    // Return full error details so we can debug
+    const detail = errorBody?.error?.message || errorBody?.message || message;
+    return NextResponse.json({ error: `Analysis failed: ${detail}` }, { status: statusCode || 500 });
   }
 }

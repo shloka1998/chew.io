@@ -120,8 +120,9 @@ export default function LogMealPage() {
     setSaving(true);
 
     try {
-      const meal: Record<string, unknown> = {
-        id: crypto.randomUUID(),
+      const id = crypto.randomUUID();
+      const baseMeal = {
+        id,
         timestamp: Date.now(),
         mealType,
         items: analysis.items,
@@ -134,14 +135,19 @@ export default function LogMealPage() {
       };
 
       if (inputMode === 'photo' && fullImage && thumbnail) {
-        meal.photo = fullImage;
-        meal.photoThumbnail = thumbnail;
+        await db.meals.add({
+          ...baseMeal,
+          photo: fullImage,
+          photoThumbnail: thumbnail,
+        });
       } else {
-        meal.textDescription = textDescription.trim();
+        await db.meals.add({
+          ...baseMeal,
+          textDescription: textDescription.trim(),
+        });
       }
 
-      await db.meals.add(meal);
-      router.push(`/meal/${meal.id}`);
+      router.push(`/meal/${id}`);
     } catch (err) {
       console.error('Save failed:', err);
       setError('Could not save the meal. Please try again.');
