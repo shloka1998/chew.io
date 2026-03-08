@@ -41,7 +41,9 @@ export default function MealCard({ meal }: { meal: Meal }) {
           {thumbUrl ? (
             <img src={thumbUrl} alt="Meal" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full skeleton" />
+            <div className="w-full h-full flex items-center justify-center text-2xl">
+              {mealTypeEmojis[meal.mealType] || '🍽️'}
+            </div>
           )}
         </div>
 

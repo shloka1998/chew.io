@@ -14,13 +14,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { imageBase64, mediaType } = await request.json();
+    const { imageBase64, mediaType, textDescription } = await request.json();
 
-    if (!imageBase64) {
-      return NextResponse.json({ error: 'No image provided' }, { status: 400 });
+    if (!imageBase64 && !textDescription) {
+      return NextResponse.json({ error: 'No image or description provided' }, { status: 400 });
     }
 
     const client = new Anthropic({ apiKey });
+
+    // Build message content based on whether we have an image or text
+    const userContent: Anthropic.Messages.ContentBlockParam[] = [];
+
+    if (imageBase64) {
+      userContent.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: mediaType || 'image/jpeg',
+          data: imageBase64,
+        },
+      });
+      userContent.push({
+        type: 'text',
+        text: 'Analyze this meal photo. Identify all food items, estimate portions and nutritional content. Return the JSON response.',
+      });
+    } else {
+      userContent.push({
+        type: 'text',
+        text: `The user described their meal as: "${textDescription}"\n\nBased on this description, identify all food items, estimate typical Indian portion sizes and nutritional content. Return the JSON response.`,
+      });
+    }
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-20250514',
@@ -29,20 +52,7 @@ export async function POST(request: NextRequest) {
       messages: [
         {
           role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mediaType || 'image/jpeg',
-                data: imageBase64,
-              },
-            },
-            {
-              type: 'text',
-              text: 'Analyze this meal photo. Identify all food items, estimate portions and nutritional content. Return the JSON response.',
-            },
-          ],
+          content: userContent,
         },
       ],
     });

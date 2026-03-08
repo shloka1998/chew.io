@@ -101,10 +101,15 @@ export default function MealDetailPage() {
         </div>
       </div>
 
-      {/* Photo */}
-      {photoUrl && (
+      {/* Photo or text description */}
+      {photoUrl ? (
         <img src={photoUrl} alt="Meal" className="w-full rounded-2xl shadow-sm max-h-72 object-cover" />
-      )}
+      ) : meal.textDescription ? (
+        <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200">
+          <p className="text-sm text-stone-500 font-medium mb-1">Meal description</p>
+          <p className="text-stone-700">{meal.textDescription}</p>
+        </div>
+      ) : null}
 
       {/* Score */}
       <div className="bg-white rounded-2xl p-4 border border-primary-100">

@@ -14,14 +14,18 @@ const mealTypes: { value: MealType; label: string; icon: string }[] = [
   { value: 'snack', label: 'Snack', icon: '🍿' },
 ];
 
+type InputMode = 'choose' | 'photo' | 'text';
+
 export default function LogMealPage() {
   const router = useRouter();
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
+  const [inputMode, setInputMode] = useState<InputMode>('choose');
   const [photoPreview, setPhotoPreview] = useState<string>('');
   const [fullImage, setFullImage] = useState<Blob | null>(null);
   const [thumbnail, setThumbnail] = useState<Blob | null>(null);
+  const [textDescription, setTextDescription] = useState('');
   const [mealType, setMealType] = useState<MealType>(getMealTypeFromTime());
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
@@ -35,6 +39,7 @@ export default function LogMealPage() {
     if (!file) return;
 
     setError('');
+    setInputMode('photo');
     try {
       const processed = await processImage(file);
       setFullImage(processed.fullImage);
@@ -43,6 +48,7 @@ export default function LogMealPage() {
     } catch (err) {
       console.error('Image processing failed:', err);
       setError('Could not process the photo. Please try again.');
+      setInputMode('choose');
     }
   }
 
@@ -77,15 +83,45 @@ export default function LogMealPage() {
     }
   }
 
+  async function analyzeText() {
+    if (!textDescription.trim()) return;
+    setAnalyzing(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          textDescription: textDescription.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Analysis failed');
+      }
+
+      const data: AnalysisResponse = await res.json();
+      setAnalysis(data);
+    } catch (err) {
+      console.error('Analysis failed:', err);
+      setError(err instanceof Error ? err.message : 'Could not analyze. Please try again.');
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   async function saveMeal() {
-    if (!fullImage || !thumbnail || !analysis) return;
+    if (!analysis) return;
+    // For photo mode, need fullImage; for text mode, need textDescription
+    if (inputMode === 'photo' && !fullImage) return;
+    if (inputMode === 'text' && !textDescription.trim()) return;
     setSaving(true);
 
     try {
-      const meal = {
+      const meal: Record<string, unknown> = {
         id: crypto.randomUUID(),
-        photo: fullImage,
-        photoThumbnail: thumbnail,
         timestamp: Date.now(),
         mealType,
         items: analysis.items,
@@ -97,6 +133,13 @@ export default function LogMealPage() {
         suggestions: analysis.suggestions,
       };
 
+      if (inputMode === 'photo' && fullImage && thumbnail) {
+        meal.photo = fullImage;
+        meal.photoThumbnail = thumbnail;
+      } else {
+        meal.textDescription = textDescription.trim();
+      }
+
       await db.meals.add(meal);
       router.push(`/meal/${meal.id}`);
     } catch (err) {
@@ -105,6 +148,18 @@ export default function LogMealPage() {
       setSaving(false);
     }
   }
+
+  function resetInput() {
+    setPhotoPreview('');
+    setFullImage(null);
+    setThumbnail(null);
+    setTextDescription('');
+    setAnalysis(null);
+    setError('');
+    setInputMode('choose');
+  }
+
+  const hasInput = inputMode === 'photo' ? !!photoPreview : inputMode === 'text' ? !!textDescription.trim() : false;
 
   return (
     <div className="px-4 pt-6 pb-4 space-y-6">
@@ -118,8 +173,8 @@ export default function LogMealPage() {
         <h1 className="text-xl font-bold text-stone-800">Log a Meal</h1>
       </div>
 
-      {/* Photo Section */}
-      {!photoPreview ? (
+      {/* Input Mode Selection */}
+      {inputMode === 'choose' && (
         <div className="space-y-4">
           {/* Camera button */}
           <button
@@ -161,11 +216,99 @@ export default function LogMealPage() {
             className="hidden"
           />
 
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-stone-200" />
+            <span className="text-sm text-stone-400 font-medium">or</span>
+            <div className="flex-1 h-px bg-stone-200" />
+          </div>
+
+          {/* Type it button */}
+          <button
+            onClick={() => setInputMode('text')}
+            className="w-full bg-white text-stone-700 text-lg font-semibold py-6 rounded-2xl border-2 border-stone-200 active:scale-[0.98] flex items-center justify-center gap-3"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+            Type What You Ate
+          </button>
+
           <p className="text-center text-stone-400 text-sm">
-            Take a clear photo of your food for the best analysis
+            Take a photo or describe your meal for nutrition analysis
           </p>
         </div>
-      ) : (
+      )}
+
+      {/* Text Input Mode */}
+      {inputMode === 'text' && !analysis && (
+        <>
+          <div className="bg-white rounded-2xl p-4 border border-primary-100">
+            <label className="block text-sm font-medium text-stone-500 mb-2">
+              Describe what you ate
+            </label>
+            <textarea
+              value={textDescription}
+              onChange={e => setTextDescription(e.target.value)}
+              placeholder="e.g., 2 neer dosa with coconut chutney and chicken curry, one glass of buttermilk..."
+              rows={4}
+              autoFocus
+              className="w-full bg-stone-50 rounded-xl p-3 text-stone-700 border-none outline-none resize-none text-base"
+            />
+            <button
+              onClick={resetInput}
+              className="text-sm text-stone-400 mt-2 underline"
+            >
+              Use a photo instead
+            </button>
+          </div>
+
+          {/* Meal type selector */}
+          <div>
+            <p className="text-sm font-medium text-stone-500 mb-2">What meal is this?</p>
+            <div className="grid grid-cols-4 gap-2">
+              {mealTypes.map(mt => (
+                <button
+                  key={mt.value}
+                  onClick={() => setMealType(mt.value)}
+                  className={`py-3 rounded-xl text-center text-sm font-medium ${
+                    mealType === mt.value
+                      ? 'bg-primary-600 text-white shadow-md'
+                      : 'bg-white text-stone-600 border border-primary-100'
+                  }`}
+                >
+                  <div className="text-lg">{mt.icon}</div>
+                  {mt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {!analyzing && (
+            <button
+              onClick={analyzeText}
+              disabled={!textDescription.trim()}
+              className="w-full bg-primary-600 text-white text-lg font-semibold py-5 rounded-2xl shadow-lg active:scale-[0.98] disabled:opacity-40 flex items-center justify-center gap-2"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+              Analyze My Meal
+            </button>
+          )}
+
+          {analyzing && (
+            <div className="bg-white rounded-2xl p-8 text-center border border-primary-100">
+              <div className="inline-block w-12 h-12 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin mb-4" />
+              <p className="text-stone-600 font-medium">Analyzing your meal...</p>
+              <p className="text-stone-400 text-sm mt-1">Estimating nutrition from your description</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Photo Mode */}
+      {inputMode === 'photo' && photoPreview && !analysis && (
         <>
           {/* Photo preview */}
           <div className="relative">
@@ -175,13 +318,7 @@ export default function LogMealPage() {
               className="w-full rounded-2xl shadow-sm max-h-72 object-cover"
             />
             <button
-              onClick={() => {
-                setPhotoPreview('');
-                setFullImage(null);
-                setThumbnail(null);
-                setAnalysis(null);
-                setError('');
-              }}
+              onClick={resetInput}
               className="absolute top-3 right-3 w-8 h-8 bg-black/50 text-white rounded-full flex items-center justify-center text-sm"
             >
               ✕
@@ -209,8 +346,8 @@ export default function LogMealPage() {
             </div>
           </div>
 
-          {/* Analyze button or results */}
-          {!analysis && !analyzing && (
+          {/* Analyze button */}
+          {!analyzing && (
             <button
               onClick={analyzePhoto}
               className="w-full bg-primary-600 text-white text-lg font-semibold py-5 rounded-2xl shadow-lg active:scale-[0.98] flex items-center justify-center gap-2"
@@ -230,105 +367,118 @@ export default function LogMealPage() {
               <p className="text-stone-400 text-sm mt-1">Identifying food items and nutrition</p>
             </div>
           )}
+        </>
+      )}
 
-          {/* Analysis results */}
-          {analysis && (
-            <div className="space-y-4">
-              {/* Score */}
-              <div className="bg-white rounded-2xl p-4 border border-primary-100">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-stone-700">Meal Score</span>
-                  <span className={`text-2xl font-bold ${
-                    analysis.mealScore >= 70 ? 'text-green-600' :
-                    analysis.mealScore >= 50 ? 'text-amber-500' : 'text-orange-500'
-                  }`}>
-                    {analysis.mealScore}/100
-                  </span>
-                </div>
-                <p className="text-sm text-stone-500">{analysis.scoreExplanation}</p>
-              </div>
+      {/* Analysis Results (shared between photo and text modes) */}
+      {analysis && (
+        <div className="space-y-4">
+          {/* Show photo preview if photo mode */}
+          {inputMode === 'photo' && photoPreview && (
+            <img src={photoPreview} alt="Your meal" className="w-full rounded-2xl shadow-sm max-h-48 object-cover" />
+          )}
 
-              {/* Food items */}
-              <div className="bg-white rounded-2xl p-4 border border-primary-100">
-                <h3 className="font-semibold text-stone-700 mb-3">Food Items Found</h3>
-                <div className="space-y-2">
-                  {analysis.items.map((item, i) => (
-                    <div key={i} className="flex items-center justify-between py-2 border-b border-stone-50 last:border-0">
-                      <div>
-                        <span className="font-medium text-stone-700">{item.name}</span>
-                        {item.nameKannada && (
-                          <span className="text-sm text-stone-400 ml-2">{item.nameKannada}</span>
-                        )}
-                        <p className="text-xs text-stone-400">{item.quantity}</p>
-                      </div>
-                      <span className="text-sm font-medium text-primary-600">
-                        {Math.round(item.calories)} kcal
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 pt-3 border-t border-stone-100 flex justify-between">
-                  <span className="font-semibold text-stone-700">Total</span>
-                  <span className="font-bold text-primary-600">
-                    {Math.round(analysis.totalNutrients.calories)} kcal
-                  </span>
-                </div>
-              </div>
-
-              {/* Suggestion */}
-              {analysis.suggestions && (
-                <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
-                  <p className="text-sm text-green-800">
-                    💡 {analysis.suggestions}
-                  </p>
-                </div>
-              )}
-
-              {/* Notes */}
-              <div className="bg-white rounded-2xl p-4 border border-primary-100">
-                <label className="block text-sm font-medium text-stone-500 mb-2">
-                  Notes about this meal (optional)
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={e => setNotes(e.target.value)}
-                  placeholder="e.g., Homemade, used less oil today..."
-                  rows={2}
-                  className="w-full bg-stone-50 rounded-xl p-3 text-stone-700 border-none outline-none resize-none text-base"
-                />
-              </div>
-
-              <div className="bg-white rounded-2xl p-4 border border-primary-100">
-                <label className="block text-sm font-medium text-stone-500 mb-2">
-                  How do you feel after eating? (optional)
-                </label>
-                <textarea
-                  value={feelingNotes}
-                  onChange={e => setFeelingNotes(e.target.value)}
-                  placeholder="e.g., Feeling full and energetic..."
-                  rows={2}
-                  className="w-full bg-stone-50 rounded-xl p-3 text-stone-700 border-none outline-none resize-none text-base"
-                />
-              </div>
-
-              {/* Save button */}
-              <button
-                onClick={saveMeal}
-                disabled={saving}
-                className="w-full bg-green-600 text-white text-lg font-semibold py-5 rounded-2xl shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {saving ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Saving...
-                  </>
-                ) : (
-                  <>✓ Save Meal</>
-                )}
-              </button>
+          {/* Show text description if text mode */}
+          {inputMode === 'text' && textDescription && (
+            <div className="bg-stone-50 rounded-2xl p-4 border border-stone-200">
+              <p className="text-sm text-stone-500 font-medium mb-1">You described:</p>
+              <p className="text-stone-700">{textDescription}</p>
             </div>
           )}
-        </>
+
+          {/* Score */}
+          <div className="bg-white rounded-2xl p-4 border border-primary-100">
+            <div className="flex items-center justify-between mb-2">
+              <span className="font-semibold text-stone-700">Meal Score</span>
+              <span className={`text-2xl font-bold ${
+                analysis.mealScore >= 70 ? 'text-green-600' :
+                analysis.mealScore >= 50 ? 'text-amber-500' : 'text-orange-500'
+              }`}>
+                {analysis.mealScore}/100
+              </span>
+            </div>
+            <p className="text-sm text-stone-500">{analysis.scoreExplanation}</p>
+          </div>
+
+          {/* Food items */}
+          <div className="bg-white rounded-2xl p-4 border border-primary-100">
+            <h3 className="font-semibold text-stone-700 mb-3">Food Items Found</h3>
+            <div className="space-y-2">
+              {analysis.items.map((item, i) => (
+                <div key={i} className="flex items-center justify-between py-2 border-b border-stone-50 last:border-0">
+                  <div>
+                    <span className="font-medium text-stone-700">{item.name}</span>
+                    {item.nameKannada && (
+                      <span className="text-sm text-stone-400 ml-2">{item.nameKannada}</span>
+                    )}
+                    <p className="text-xs text-stone-400">{item.quantity}</p>
+                  </div>
+                  <span className="text-sm font-medium text-primary-600">
+                    {Math.round(item.calories)} kcal
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 pt-3 border-t border-stone-100 flex justify-between">
+              <span className="font-semibold text-stone-700">Total</span>
+              <span className="font-bold text-primary-600">
+                {Math.round(analysis.totalNutrients.calories)} kcal
+              </span>
+            </div>
+          </div>
+
+          {/* Suggestion */}
+          {analysis.suggestions && (
+            <div className="bg-green-50 rounded-2xl p-4 border border-green-100">
+              <p className="text-sm text-green-800">
+                {analysis.suggestions}
+              </p>
+            </div>
+          )}
+
+          {/* Notes */}
+          <div className="bg-white rounded-2xl p-4 border border-primary-100">
+            <label className="block text-sm font-medium text-stone-500 mb-2">
+              Notes about this meal (optional)
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="e.g., Homemade, used less oil today..."
+              rows={2}
+              className="w-full bg-stone-50 rounded-xl p-3 text-stone-700 border-none outline-none resize-none text-base"
+            />
+          </div>
+
+          <div className="bg-white rounded-2xl p-4 border border-primary-100">
+            <label className="block text-sm font-medium text-stone-500 mb-2">
+              How do you feel after eating? (optional)
+            </label>
+            <textarea
+              value={feelingNotes}
+              onChange={e => setFeelingNotes(e.target.value)}
+              placeholder="e.g., Feeling full and energetic..."
+              rows={2}
+              className="w-full bg-stone-50 rounded-xl p-3 text-stone-700 border-none outline-none resize-none text-base"
+            />
+          </div>
+
+          {/* Save button */}
+          <button
+            onClick={saveMeal}
+            disabled={saving}
+            className="w-full bg-green-600 text-white text-lg font-semibold py-5 rounded-2xl shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {saving ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>Save Meal</>
+            )}
+          </button>
+        </div>
       )}
 
       {/* Error */}

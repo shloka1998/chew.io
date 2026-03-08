@@ -31,8 +31,9 @@ export interface NutrientBreakdown {
 
 export interface Meal {
   id: string;
-  photo: Blob;
-  photoThumbnail: Blob;
+  photo?: Blob;
+  photoThumbnail?: Blob;
+  textDescription?: string;
   timestamp: number;
   mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
   items: FoodItem[];
